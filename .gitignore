@@ -3,10 +3,12 @@ node_modules/
 *.so
 .Python
 build/
+datas/
 develop-eggs/
 dist/
 downloads/
 eggs/
+*.xlsx
 .eggs/
 lib/
 lib64/

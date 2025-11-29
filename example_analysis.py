@@ -27,7 +27,7 @@ def main():
         
         # 创建分析器（自动从环境变量读取配置）
         analyzer = CommentAnalyzer(
-            model="gpt-3.5-turbo"  # 使用OpenAI网关时建议用gpt-3.5-turbo
+            model="deepseek-chat"  # DeepSeek模型，使用OpenAI网关时建议用gpt-3.5-turbo
         ) 
         # 分析Excel文件
         excel_path = "datas/excel_datas/note_comments_2.xlsx"

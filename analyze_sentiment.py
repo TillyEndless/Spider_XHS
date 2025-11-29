@@ -30,10 +30,12 @@ class CommentAnalyzer:
         # 优先使用环境变量中的base_url，否则根据api_key判断
         if base_url:
             self.base_url = base_url
+        elif os.getenv('DEEPSEEK_BASE_URL'):
+            self.base_url = os.getenv('DEEPSEEK_BASE_URL')
         elif os.getenv('OPENAI_BASE_URL') or os.getenv('OPENAI_HK_BASE_URL'):
             self.base_url = os.getenv('OPENAI_BASE_URL') or os.getenv('OPENAI_HK_BASE_URL')
         else:
-            self.base_url = os.getenv('DEEPSEEK_BASE_URL', 'https://api.deepseek.com')
+            self.base_url = 'https://api.deepseek.com'
         
         # 确保base_url格式正确
         # OpenAI SDK会自动添加/v1，所以base_url应该是 https://api.xxx.com

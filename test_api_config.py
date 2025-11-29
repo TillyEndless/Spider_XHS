@@ -12,10 +12,15 @@ load_dotenv()
 
 def test_api():
     """测试API连接"""
-    # 从环境变量读取配置
-    api_key = os.getenv('OPENAI_HK_API_KEY') or os.getenv('OPENAI_API_KEY') or os.getenv('DEEPSEEK_API_KEY')
-    base_url = os.getenv('OPENAI_HK_BASE_URL') or os.getenv('OPENAI_BASE_URL') or os.getenv('DEEPSEEK_BASE_URL', 'https://api.deepseek.com')
-    model = os.getenv('OPENAI_MODEL', 'gpt-3.5-turbo')
+    # 从环境变量读取配置（优先使用 DeepSeek）
+    api_key = os.getenv('DEEPSEEK_API_KEY') or os.getenv('OPENAI_HK_API_KEY') or os.getenv('OPENAI_API_KEY')
+    base_url = os.getenv('DEEPSEEK_BASE_URL', 'https://api.deepseek.com') or os.getenv('OPENAI_HK_BASE_URL') or os.getenv('OPENAI_BASE_URL')
+    
+    # 根据使用的API自动选择模型
+    if os.getenv('DEEPSEEK_API_KEY'):
+        model = os.getenv('DEEPSEEK_MODEL', 'deepseek-chat')
+    else:
+        model = os.getenv('OPENAI_MODEL', 'gpt-3.5-turbo')
     
     if not api_key:
         logger.error("未找到API密钥！")

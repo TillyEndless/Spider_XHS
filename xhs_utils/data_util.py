@@ -132,7 +132,13 @@ def handle_note_info(data):
         'ip_location': ip_location,
     }
 
-def handle_comment_info(data):
+def handle_comment_info(data, root_comment_id=None, parent_comment_id=None):
+    """
+    处理评论信息
+    :param data: 评论数据
+    :param root_comment_id: 主评论ID（如果是二级评论，需要传入主评论ID）
+    :param parent_comment_id: 父评论ID（这条评论回复的是哪条评论，用于构建回复关系）
+    """
     note_id = data['note_id']
     note_url = data['note_url']
     comment_id = data['id']
@@ -160,10 +166,29 @@ def handle_comment_info(data):
                 pass
     except:
         pass
+    
+    # 如果没有传入root_comment_id，说明这是一级评论，主评论ID就是自己的ID
+    if root_comment_id is None:
+        root_comment_id = comment_id
+    
+    # 尝试从原始数据中获取target_comment_id（回复的目标评论ID）
+    target_comment_id = None
+    if parent_comment_id:
+        target_comment_id = parent_comment_id
+    else:
+        # 尝试从数据中提取回复关系
+        try:
+            # 小红书API可能返回target_comment_id或target_id字段
+            target_comment_id = data.get('target_comment_id') or data.get('target_id') or data.get('reply_to_comment_id')
+        except:
+            pass
+    
     return {
         'note_id': note_id,
         'note_url': note_url,
         'comment_id': comment_id,
+        'root_comment_id': root_comment_id,  # 主评论ID，用于分组对话
+        'parent_comment_id': target_comment_id or '',  # 父评论ID（回复关系），空字符串表示这是一级评论或没有回复关系
         'user_id': user_id,
         'home_url': home_url,
         'nickname': nickname,
@@ -183,7 +208,7 @@ def save_to_xlsx(datas, file_path, type='note'):
     elif type == 'user':
         headers = ['用户id', '用户主页url', '用户名', '头像url', '小红书号', '性别', 'ip地址', '介绍', '关注数量', '粉丝数量', '作品被赞和收藏数量', '标签']
     else:
-        headers = ['笔记id', '笔记url', '评论id', '用户id', '用户主页url', '昵称', '头像url', '评论内容', '评论标签', '点赞数量', '上传时间', 'ip归属地', '图片地址url列表']
+        headers = ['笔记id', '笔记url', '评论id', '主评论id', '父评论id', '用户id', '用户主页url', '昵称', '头像url', '评论内容', '评论标签', '点赞数量', '上传时间', 'ip归属地', '图片地址url列表']
     ws.append(headers)
     for data in datas:
         data = {k: norm_text(str(v)) for k, v in data.items()}

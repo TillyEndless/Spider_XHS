@@ -655,17 +655,30 @@ class XHS_Apis():
                 success, msg, res_json = self.get_note_out_comment(note_id, cursor, xsec_token, cookies_str, proxies)
                 if not success:
                     raise Exception(msg)
+                # 检查返回数据结构
+                if "data" not in res_json:
+                    logger.error(f"API返回数据中没有data字段，完整响应: {res_json}")
+                    raise Exception("API返回数据格式错误：缺少data字段")
+                if "comments" not in res_json["data"]:
+                    # 如果没有comments字段，可能该笔记没有评论
+                    logger.info(f"笔记 {note_id} 没有评论或评论功能被关闭")
+                    break
                 comments = res_json["data"]["comments"]
                 if 'cursor' in res_json["data"]:
                     cursor = str(res_json["data"]["cursor"])
                 else:
                     break
                 note_out_comment_list.extend(comments)
-                if len(note_out_comment_list) == 0 or not res_json["data"]["has_more"]:
+                if len(note_out_comment_list) == 0 or not res_json["data"].get("has_more", False):
                     break
+        except KeyError as e:
+            success = False
+            msg = f"访问数据字段失败: {str(e)}，可能是API返回格式变化"
+            logger.error(f"获取评论时发生KeyError: {e}, note_id: {note_id}")
         except Exception as e:
             success = False
             msg = str(e)
+            logger.error(f"获取评论时发生异常: {e}, note_id: {note_id}")
         return success, msg, note_out_comment_list
 
     def get_note_inner_comment(self, comment: dict, cursor: str, xsec_token: str, cookies_str: str, proxies: dict = None):
@@ -706,32 +719,52 @@ class XHS_Apis():
             返回笔记的全部二级评论
         """
         try:
-            if not comment['sub_comment_has_more']:
+            if not comment.get('sub_comment_has_more', False):
+                # 确保有sub_comments字段
+                if 'sub_comments' not in comment:
+                    comment['sub_comments'] = []
                 return True, 'success', comment
-            cursor = comment['sub_comment_cursor']
+            cursor = comment.get('sub_comment_cursor', '')
+            if not cursor:
+                if 'sub_comments' not in comment:
+                    comment['sub_comments'] = []
+                return True, 'success', comment
             inner_comment_list = []
             while True:
                 success, msg, res_json = self.get_note_inner_comment(comment, cursor, xsec_token, cookies_str, proxies)
                 if not success:
                     raise Exception(msg)
+                # 检查返回数据中是否有comments字段
+                if "data" not in res_json:
+                    logger.warning(f"获取二级评论API返回数据中没有data字段")
+                    break
+                if "comments" not in res_json["data"]:
+                    break
                 comments = res_json["data"]["comments"]
                 if 'cursor' in res_json["data"]:
                     cursor = str(res_json["data"]["cursor"])
                 else:
                     break
                 inner_comment_list.extend(comments)
-                if not res_json["data"]["has_more"]:
+                if not res_json["data"].get("has_more", False):
                     break
+            if 'sub_comments' not in comment:
+                comment['sub_comments'] = []
             comment['sub_comments'].extend(inner_comment_list)
+        except KeyError as e:
+            success = False
+            msg = f"访问数据字段失败: {str(e)}，可能是API返回格式变化"
+            logger.error(f"获取二级评论时发生KeyError: {e}, comment_id: {comment.get('id', 'unknown')}")
         except Exception as e:
             success = False
             msg = str(e)
+            logger.error(f"获取二级评论时发生异常: {e}, comment_id: {comment.get('id', 'unknown')}")
         return success, msg, comment
 
     def get_note_all_comment(self, url: str, cookies_str: str, proxies: dict = None):
         """
             获取一篇文章的所有评论
-            :param note_id: 你想要获取的笔记的id
+            :param url: 笔记的完整URL
             :param cookies_str: 你的cookies
             返回一篇文章的所有评论
         """
@@ -741,13 +774,26 @@ class XHS_Apis():
             note_id = urlParse.path.split("/")[-1]
             kvs = urlParse.query.split('&')
             kvDist = {kv.split('=')[0]: kv.split('=')[1] for kv in kvs}
+            
+            # 检查xsec_token是否存在
+            if 'xsec_token' not in kvDist:
+                raise Exception("URL中缺少xsec_token参数")
+            
             success, msg, out_comment_list = self.get_note_all_out_comment(note_id, kvDist['xsec_token'], cookies_str, proxies)
             if not success:
                 raise Exception(msg)
+            
+            # 如果没有评论，直接返回空列表
+            if not out_comment_list:
+                return True, "该笔记没有评论", []
+            
+            # 获取二级评论
             for comment in out_comment_list:
                 success, msg, new_comment = self.get_note_all_inner_comment(comment, kvDist['xsec_token'], cookies_str, proxies)
                 if not success:
-                    raise Exception(msg)
+                    # 如果获取二级评论失败，继续处理其他评论，不中断整个流程
+                    logger.warning(f"获取二级评论失败: {msg}, comment_id: {comment.get('id', 'unknown')}")
+                    continue
         except Exception as e:
             success = False
             msg = str(e)
@@ -998,7 +1044,7 @@ if __name__ == '__main__':
     success, msg, note_info = xhs_apis.get_note_info(note_url, cookies_str)
     logger.info(f'获取笔记信息结果 {json.dumps(note_info, ensure_ascii=False)}: {success}, msg: {msg}')
     # 获取搜索关键词
-    query = "榴莲"
+    query = "干皮粉底液秋冬"
     success, msg, search_keyword = xhs_apis.get_search_keyword(query, cookies_str)
     logger.info(f'获取搜索关键词结果 {json.dumps(search_keyword, ensure_ascii=False)}: {success}, msg: {msg}')
     # 搜索笔记

@@ -3,7 +3,7 @@ import os
 from loguru import logger
 from apis.xhs_pc_apis import XHS_Apis
 from xhs_utils.common_util import init
-from xhs_utils.data_util import handle_note_info, download_note, save_to_xlsx
+from xhs_utils.data_util import handle_note_info, download_note, save_to_xlsx, handle_comment_info
 
 
 class Data_Spider():
@@ -110,6 +110,123 @@ class Data_Spider():
         logger.info(f'搜索关键词 {query} 笔记: {success}, msg: {msg}')
         return note_list, success, msg
 
+    def spider_note_comments(self, note_url: str, cookies_str: str, base_path: dict, excel_name: str = '', proxies=None):
+        """
+        爬取一个笔记的所有评论（包括一级和二级评论）
+        :param note_url: 笔记的URL
+        :param cookies_str: cookies字符串
+        :param base_path: 保存路径字典
+        :param excel_name: Excel文件名（不含扩展名）
+        :param proxies: 代理设置（可选）
+        :return: success, msg, comment_list
+        """
+        import urllib.parse
+        comment_list = []
+        try:
+            # 从URL中提取笔记ID
+            url_parse = urllib.parse.urlparse(note_url)
+            note_id = url_parse.path.split("/")[-1]
+            
+            # 获取所有评论
+            success, msg, all_comments = self.xhs_apis.get_note_all_comment(note_url, cookies_str, proxies)
+            if not success:
+                logger.error(f'获取评论失败: {msg}')
+                logger.error('可能的原因：1. Cookie已过期 2. URL中的xsec_token已过期 3. 该笔记没有评论')
+                return False, msg, comment_list
+            
+            # 检查返回的数据
+            if all_comments is None:
+                all_comments = []
+            
+            if len(all_comments) == 0:
+                logger.warning(f'该笔记没有评论')
+                # 即使没有评论，也创建一个空的Excel文件
+                if excel_name == '':
+                    excel_name = f'note_{note_id}_comments'
+                file_path = os.path.abspath(os.path.join(base_path['excel'], f'{excel_name}.xlsx'))
+                save_to_xlsx([], file_path, type='comment')
+                logger.info(f'已创建空的评论文件: {file_path}')
+                return True, '该笔记没有评论', []
+            
+            logger.info(f'成功获取 {len(all_comments)} 条一级评论')
+            
+            # 处理评论数据
+            # 先处理所有一级评论，建立评论ID映射
+            comment_id_map = {}  # {comment_id: processed_comment}
+            
+            for comment in all_comments:
+                # 确保评论数据包含必要的字段
+                if 'note_id' not in comment:
+                    comment['note_id'] = note_id
+                comment['note_url'] = note_url
+                
+                # 处理一级评论
+                try:
+                    root_comment_id = comment.get('id')  # 一级评论的ID作为主评论ID
+                    processed_comment = handle_comment_info(comment, root_comment_id=None, parent_comment_id=None)  # None表示这是一级评论
+                    comment_list.append(processed_comment)
+                    comment_id_map[root_comment_id] = processed_comment  # 保存映射，用于后续回复关系
+                except Exception as e:
+                    logger.warning(f'处理一级评论失败: {e}, comment_id: {comment.get("id", "unknown")}')
+                    continue
+                
+                # 处理二级评论（如果有）
+                if 'sub_comments' in comment and comment['sub_comments']:
+                    for sub_comment in comment['sub_comments']:
+                        if 'note_id' not in sub_comment:
+                            sub_comment['note_id'] = note_id
+                        sub_comment['note_url'] = note_url
+                        try:
+                            # 确定父评论ID：优先使用target_comment_id，否则使用主评论ID
+                            parent_id = None
+                            # 尝试从sub_comment中获取target_comment_id（回复的目标评论ID）
+                            target_id = (sub_comment.get('target_comment_id') or 
+                                        sub_comment.get('target_id') or 
+                                        sub_comment.get('reply_to_comment_id') or
+                                        sub_comment.get('target_comment', {}).get('id') if isinstance(sub_comment.get('target_comment'), dict) else None)
+                            
+                            if target_id:
+                                # 如果target_id存在，检查是否是回复主评论还是回复其他二级评论
+                                if target_id == root_comment_id:
+                                    # 回复主评论
+                                    parent_id = root_comment_id
+                                elif target_id in comment_id_map:
+                                    # 回复其他二级评论
+                                    parent_id = target_id
+                                else:
+                                    # target_id不在已知评论中，可能是回复主评论
+                                    parent_id = root_comment_id
+                            else:
+                                # 如果没有target_id，默认回复主评论
+                                parent_id = root_comment_id
+                            
+                            # 传入主评论ID和父评论ID
+                            processed_sub_comment = handle_comment_info(
+                                sub_comment, 
+                                root_comment_id=root_comment_id,
+                                parent_comment_id=parent_id
+                            )
+                            comment_list.append(processed_sub_comment)
+                            comment_id_map[sub_comment.get('id')] = processed_sub_comment  # 保存映射，用于后续回复关系
+                        except Exception as e:
+                            logger.warning(f'处理二级评论失败: {e}, comment_id: {sub_comment.get("id", "unknown")}')
+            
+            # 保存到Excel
+            if excel_name == '':
+                excel_name = f'note_{note_id}_comments'
+            
+            file_path = os.path.abspath(os.path.join(base_path['excel'], f'{excel_name}.xlsx'))
+            save_to_xlsx(comment_list, file_path, type='comment')
+            logger.info(f'成功保存 {len(comment_list)} 条评论到 {file_path}')
+            
+            return True, '成功', comment_list
+            
+        except Exception as e:
+            success = False
+            msg = str(e)
+            logger.error(f'爬取评论异常: {msg}')
+            return success, msg, comment_list
+
 if __name__ == '__main__':
     """
         此文件为爬虫的入口文件，可以直接运行
@@ -127,26 +244,34 @@ if __name__ == '__main__':
 
 
     # 1 爬取列表的所有笔记信息 笔记链接 如下所示 注意此url会过期！
-    notes = [
-        r'https://www.xiaohongshu.com/explore/683fe17f0000000023017c6a?xsec_token=ABBr_cMzallQeLyKSRdPk9fwzA0torkbT_ubuQP1ayvKA=&xsec_source=pc_user',
-    ]
-    data_spider.spider_some_note(notes, cookies_str, base_path, 'all', 'test')
+    # notes = [
+    #     r'https://www.xiaohongshu.com/explore/683fe17f0000000023017c6a?xsec_token=ABBr_cMzallQeLyKSRdPk9fwzA0torkbT_ubuQP1ayvKA=&xsec_source=pc_user',
+    # ]
+    # data_spider.spider_some_note(notes, cookies_str, base_path, 'all', 'test')
 
     # 2 爬取用户的所有笔记信息 用户链接 如下所示 注意此url会过期！
-    user_url = 'https://www.xiaohongshu.com/user/profile/64c3f392000000002b009e45?xsec_token=AB-GhAToFu07JwNk_AMICHnp7bSTjVz2beVIDBwSyPwvM=&xsec_source=pc_feed'
-    data_spider.spider_user_all_note(user_url, cookies_str, base_path, 'all')
+    # user_url = 'https://www.xiaohongshu.com/user/profile/64c3f392000000002b009e45?xsec_token=AB-GhAToFu07JwNk_AMICHnp7bSTjVz2beVIDBwSyPwvM=&xsec_source=pc_feed'
+    # data_spider.spider_user_all_note(user_url, cookies_str, base_path, 'all')
 
     # 3 搜索指定关键词的笔记
-    query = "榴莲"
-    query_num = 10
-    sort_type_choice = 0  # 0 综合排序, 1 最新, 2 最多点赞, 3 最多评论, 4 最多收藏
-    note_type = 0 # 0 不限, 1 视频笔记, 2 普通笔记
-    note_time = 0  # 0 不限, 1 一天内, 2 一周内天, 3 半年内
-    note_range = 0  # 0 不限, 1 已看过, 2 未看过, 3 已关注
-    pos_distance = 0  # 0 不限, 1 同城, 2 附近 指定这个1或2必须要指定 geo
+    # query = "榴莲"
+    # query_num = 10
+    # sort_type_choice = 0  # 0 综合排序, 1 最新, 2 最多点赞, 3 最多评论, 4 最多收藏
+    # note_type = 0 # 0 不限, 1 视频笔记, 2 普通笔记
+    # note_time = 0  # 0 不限, 1 一天内, 2 一周内天, 3 半年内
+    # note_range = 0  # 0 不限, 1 已看过, 2 未看过, 3 已关注
+    # pos_distance = 0  # 0 不限, 1 同城, 2 附近 指定这个1或2必须要指定 geo
     # geo = {
     #     # 经纬度
     #     "latitude": 39.9725,
     #     "longitude": 116.4207
     # }
-    data_spider.spider_some_search_note(query, query_num, cookies_str, base_path, 'all', sort_type_choice, note_type, note_time, note_range, pos_distance, geo=None)
+    # data_spider.spider_some_search_note(query, query_num, cookies_str, base_path, 'all', sort_type_choice, note_type, note_time, note_range, pos_distance, geo=None)
+
+    # 4 爬取指定笔记的所有评论
+    note_url = 'https://www.xiaohongshu.com/explore/6909a4c30000000005012d93?xsec_token=ABbSltgEnndyV1aDOGXSIeIOHVmH4l4476vtl4GZ3bFwY=&xsec_source=pc_search&source=unknown'
+    success, msg, comments = data_spider.spider_note_comments(note_url, cookies_str, base_path, 'note_comments_2')
+    if success:
+        logger.info(f'成功爬取 {len(comments)} 条评论')
+    else:
+        logger.error(f'爬取评论失败: {msg}')
